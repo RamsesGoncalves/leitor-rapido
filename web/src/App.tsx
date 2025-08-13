@@ -1,0 +1,313 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MagicCard } from "./components/MagicCard";
+import { ShinyButton } from "./components/ShinyButton";
+import { countWordsInToken, endPunctuationMultiplier, complexityMultiplier } from "./lib/textUtils";
+import { PDFViewer } from "./components/PDFViewer";
+
+type UploadResponse = { document_id: string; status: string };
+type StatusResponse = { status: string; word_count: number };
+
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
+
+export function App() {
+  const [documentId, setDocumentId] = useState<string | null>(null);
+  const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [words, setWords] = useState<string[]>([]);
+  const [wpm, setWpm] = useState<number>(300);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [currentIndex, setCurrentIndex] = useState<number>(0);
+  const [displayTokens, setDisplayTokens] = useState<string[]>([]);
+  const [tokenPages, setTokenPages] = useState<number[]>([]);
+  const [pageCount, setPageCount] = useState<number>(0);
+  const [startPage, setStartPage] = useState<number>(1);
+  const [showNextPreview, setShowNextPreview] = useState<boolean>(true);
+  const [tokenWeights, setTokenWeights] = useState<number[]>([]);
+  const [groupSize, setGroupSize] = useState<number>(1); // 1, 2 ou 3 tokens por tela
+  const timerRef = useRef<number | null>(null);
+
+  // Intervalo por palavra em ms
+  // Duração base por palavra em ms
+  const msPerWord = useMemo(() => Math.max(60_000 / Math.max(1, wpm), 50), [wpm]);
+
+  // Regra: ponto final (.) deve encerrar a janela atual, independente do groupSize
+  const isTerminalPeriod = useCallback((token: string | undefined): boolean => {
+    if (!token) return false;
+    const t = (token || "").trim();
+    // Considera apenas ponto final simples "." (evita reticências "...")
+    if (/\.\.\.$/.test(t)) return false;
+    return /\.$/.test(t);
+  }, []);
+
+  // Determina quantos tokens devem ser exibidos a partir de startIndex
+  const computeWindowSize = useCallback((startIndex: number): number => {
+    if (startIndex < 0 || startIndex >= displayTokens.length) return 0;
+    const maxWindow = Math.min(groupSize, displayTokens.length - startIndex);
+    for (let offset = 0; offset < maxWindow; offset++) {
+      const token = displayTokens[startIndex + offset];
+      if (isTerminalPeriod(token)) return offset + 1;
+    }
+    return maxWindow;
+  }, [displayTokens, groupSize, isTerminalPeriod]);
+
+  // Determina o início da janela anterior ao currentIndex
+  const computePreviousStartIndex = useCallback((index: number): number => {
+    if (index <= 0) return 0;
+    let countBack = 0;
+    for (let i = index - 1; i >= 0 && countBack < groupSize; i--) {
+      countBack += 1;
+      if (isTerminalPeriod(displayTokens[i])) break;
+    }
+    return Math.max(0, index - countBack);
+  }, [displayTokens, groupSize, isTerminalPeriod]);
+
+  // Controle do player
+  const tick = useCallback(() => {
+    setCurrentIndex((idx) => {
+      const step = computeWindowSize(idx);
+      const nextIndex = idx + step;
+      if (nextIndex >= displayTokens.length) {
+        setIsPlaying(false);
+        return idx;
+      }
+      return nextIndex;
+    });
+  }, [displayTokens.length, computeWindowSize]);
+
+  useEffect(() => {
+    if (!isPlaying || displayTokens.length === 0) {
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+      return;
+    }
+    // Soma das durações dos tokens na janela atual considerando ponto final
+    const windowSize = computeWindowSize(currentIndex);
+    let duration = 0;
+    for (let offset = 0; offset < windowSize; offset++) {
+      const token = displayTokens[currentIndex + offset];
+      if (!token) break;
+      const weight = tokenWeights[currentIndex + offset] ?? countWordsInToken(token);
+      duration += msPerWord * Math.max(1, weight) * endPunctuationMultiplier(token) * complexityMultiplier(token);
+    }
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(tick, duration);
+    return () => {
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+    };
+  }, [isPlaying, msPerWord, tick, displayTokens, tokenWeights, currentIndex, computeWindowSize]);
+
+  const onUpload = async (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_BASE}/documents`, { method: "POST", body: form });
+    if (!res.ok) throw new Error("Falha ao enviar PDF");
+    const data: UploadResponse = await res.json();
+    setDocumentId(data.document_id);
+    setStatus({ status: data.status, word_count: 0 });
+    setWords([]);
+    setDisplayTokens([]);
+    setCurrentIndex(0);
+  };
+
+  // Polling do status e fetch das palavras
+  useEffect(() => {
+    if (!documentId) return;
+    let stop = false;
+    const iv = setInterval(async () => {
+      try {
+        const sres = await fetch(`${API_BASE}/documents/${documentId}/status`);
+        if (!sres.ok) return;
+        const sdata: StatusResponse = await sres.json();
+        setStatus(sdata);
+        if (sdata.status === "completed") {
+          const wres = await fetch(`${API_BASE}/documents/${documentId}/words`);
+          if (wres.ok) {
+            const wdata: { words: string[] } = await wres.json();
+            if (!stop) setWords(wdata.words);
+          }
+          clearInterval(iv);
+        }
+      } catch {}
+    }, 1000);
+    return () => {
+      stop = true;
+      clearInterval(iv);
+    };
+  }, [documentId]);
+
+  // Após completed, buscar tokens do backend
+  useEffect(() => {
+    if (!documentId || status?.status !== "completed") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const tres = await fetch(`${API_BASE}/documents/${documentId}/tokens`);
+        if (tres.ok) {
+          const tdata: { tokens: string[]; pages?: number[]; page_count?: number; weights?: number[] } = await tres.json();
+          if (!cancelled) {
+            setDisplayTokens(tdata.tokens);
+            setTokenPages(tdata.pages ?? []);
+            setPageCount(tdata.page_count ?? 0);
+            setTokenWeights(tdata.weights ?? Array(tdata.tokens.length).fill(1));
+            setCurrentIndex(0);
+          }
+        }
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [documentId, status?.status]);
+
+  // Salto para página inicial selecionada
+  useEffect(() => {
+    if (!tokenPages.length) return;
+    const idx = tokenPages.findIndex((p) => p >= startPage);
+    if (idx >= 0) setCurrentIndex(idx);
+  }, [startPage, tokenPages]);
+
+  const currentWord = useMemo(() => {
+    const size = computeWindowSize(currentIndex);
+    const windowTokens = displayTokens.slice(currentIndex, currentIndex + size);
+    return windowTokens.join(" ");
+  }, [displayTokens, currentIndex, computeWindowSize]);
+
+  return (
+    <div className="container mx-auto max-w-4xl px-4 py-8">
+      <header className="mb-8">
+        <h1 className="text-2xl font-semibold">Leitor Rápido</h1>
+        <p className="text-zinc-400">Envie um PDF e reproduza as palavras no ritmo desejado (PPM).</p>
+      </header>
+
+      <div className="grid gap-6">
+        <MagicCard className="p-6">
+          <div className="flex items-center gap-4">
+            <input
+              id="file"
+              type="file"
+              accept="application/pdf"
+              className="block w-full text-sm text-zinc-300 file:mr-4 file:rounded-md file:border-0 file:bg-zinc-800 file:px-4 file:py-2 file:text-zinc-100 hover:file:bg-zinc-700"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) onUpload(f).catch(() => alert("Falha no upload"));
+              }}
+            />
+          </div>
+          <div className="mt-4 text-sm text-zinc-400">
+            {documentId && (
+              <div className="flex items-center justify-between">
+                <span>ID: {documentId}</span>
+                <span>Status: {status?.status ?? "-"}</span>
+                <span>Palavras: {status?.word_count ?? 0}</span>
+              </div>
+            )}
+          </div>
+        </MagicCard>
+
+        <MagicCard className="p-6">
+          <div className="flex flex-col items-center gap-4">
+            <div className="text-5xl font-bold h-20 flex items-center justify-center">
+              {currentWord || "—"}
+            </div>
+            {showNextPreview && (
+              <div className="text-sm text-zinc-500 mt-1">
+                {(() => {
+                  const currentSize = computeWindowSize(currentIndex);
+                  const nextStart = currentIndex + currentSize;
+                  const nextSize = computeWindowSize(nextStart);
+                  const nextTokens = displayTokens.slice(nextStart, nextStart + nextSize);
+                  const nextText = nextTokens.length ? nextTokens.join(" ") : "—";
+                  return <>Próxima: {nextText}</>;
+                })()}
+              </div>
+            )}
+            <div className="flex w-full items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <label htmlFor="wpm" className="text-sm text-zinc-400">PPM</label>
+                <input
+                  id="wpm"
+                  type="number"
+                  min={60}
+                  max={1200}
+                  step={10}
+                  value={wpm}
+                  onChange={(e) => setWpm(Number(e.target.value))}
+                  className="w-28 rounded-md bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-inset ring-zinc-700 focus:ring-2"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label htmlFor="groupSize" className="text-sm text-zinc-400">Palavras por tela</label>
+                <select
+                  id="groupSize"
+                  value={groupSize}
+                  onChange={(e) => setGroupSize(Number(e.target.value))}
+                  className="rounded-md bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-inset ring-zinc-700 focus:ring-2"
+                >
+                  <option value={1}>1</option>
+                  <option value={2}>2</option>
+                  <option value={3}>3</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label htmlFor="preview" className="text-sm text-zinc-400">Preview</label>
+                <input
+                  id="preview"
+                  type="checkbox"
+                  checked={showNextPreview}
+                  onChange={(e) => setShowNextPreview(e.target.checked)}
+                  className="h-4 w-4"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label htmlFor="startPage" className="text-sm text-zinc-400">Página inicial</label>
+                <input
+                  id="startPage"
+                  type="number"
+                  min={1}
+                  max={Math.max(1, pageCount)}
+                  value={startPage}
+                  onChange={(e) => setStartPage(Number(e.target.value))}
+                  className="w-28 rounded-md bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-inset ring-zinc-700 focus:ring-2"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <ShinyButton onClick={() => setIsPlaying((p) => !p)}>
+                  {isPlaying ? "Pausar" : "Reproduzir"}
+                </ShinyButton>
+                <ShinyButton variant="secondary" onClick={() => setCurrentIndex((i) => computePreviousStartIndex(i))}>
+                  « Anterior
+                </ShinyButton>
+                <ShinyButton variant="secondary" onClick={() => setCurrentIndex((i) => {
+                  const step = computeWindowSize(i);
+                  return Math.min(displayTokens.length - 1, i + step);
+                })}>
+                  Próxima »
+                </ShinyButton>
+                <ShinyButton variant="secondary" onClick={() => { setCurrentIndex(0); setIsPlaying(false); }}>
+                  Reiniciar
+                </ShinyButton>
+              </div>
+            </div>
+            <div className="w-full text-sm text-zinc-400">
+              Posição: {displayTokens.length ? `${currentIndex + 1} / ${displayTokens.length}` : "-"}
+            </div>
+          </div>
+        </MagicCard>
+
+        {documentId && (
+          <MagicCard className="p-2">
+            <div className="flex items-center justify-between px-4 py-2 text-sm text-zinc-400">
+              <div>Página atual: {tokenPages[currentIndex] ?? 1} / {pageCount || "?"}</div>
+              <div>Visualização do PDF</div>
+            </div>
+            <PDFViewer
+              url={`${API_BASE}/documents/${documentId}/file`}
+              page={tokenPages[currentIndex] ?? 1}
+              className="w-full h-auto"
+            />
+          </MagicCard>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
