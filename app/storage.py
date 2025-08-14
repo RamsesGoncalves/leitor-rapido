@@ -1,8 +1,108 @@
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
+from pathlib import Path
+import sqlite3
+from datetime import datetime
 
 
-# Banco de dados em memória simples
+# Banco de dados em memória para conteúdo processado (tokens/words)
 # Exemplo: {"doc-123": {"status": "completed", "words": ["olá", "mundo"]}}
 db: Dict[str, Dict[str, Any]] = {}
+
+
+# Persistência leve em SQLite para metadados dos documentos
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+SQLITE_PATH = DATA_DIR / "leitor.db"
+
+
+def _get_conn() -> sqlite3.Connection:
+    return sqlite3.connect(SQLITE_PATH, check_same_thread=False)
+
+
+def init_db() -> None:
+    with _get_conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS documents (
+                id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                uploaded_at TEXT NOT NULL,
+                status TEXT NOT NULL,
+                page_count INTEGER DEFAULT 0,
+                last_read_page INTEGER DEFAULT 1
+            )
+            """
+        )
+        conn.commit()
+
+
+def insert_document_record(document_id: str, filename: str, file_path: str, status: str = "processing") -> None:
+    uploaded_at = datetime.utcnow().isoformat()
+    with _get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO documents (id, filename, file_path, uploaded_at, status, page_count, last_read_page) VALUES (?, ?, ?, ?, COALESCE((SELECT status FROM documents WHERE id = ?), ?), COALESCE((SELECT page_count FROM documents WHERE id = ?), 0), COALESCE((SELECT last_read_page FROM documents WHERE id = ?), 1))",
+            (document_id, filename, file_path, uploaded_at, document_id, status, document_id, document_id),
+        )
+        conn.commit()
+
+
+def update_document_after_processing(document_id: str, page_count: int, status: str = "completed") -> None:
+    with _get_conn() as conn:
+        conn.execute(
+            "UPDATE documents SET status = ?, page_count = ?, last_read_page = COALESCE(last_read_page, 1) WHERE id = ?",
+            (status, page_count, document_id),
+        )
+        conn.commit()
+
+
+def list_documents() -> List[Dict[str, Any]]:
+    with _get_conn() as conn:
+        cur = conn.execute(
+            "SELECT id, filename, status, page_count, last_read_page, uploaded_at FROM documents ORDER BY uploaded_at DESC"
+        )
+        rows = cur.fetchall()
+    documents = [
+        {
+            "id": r[0],
+            "filename": r[1],
+            "status": r[2],
+            "page_count": int(r[3] or 0),
+            "last_read_page": int(r[4] or 1),
+            "uploaded_at": r[5],
+        }
+        for r in rows
+    ]
+    return documents
+
+
+def get_document_meta(document_id: str) -> Optional[Dict[str, Any]]:
+    with _get_conn() as conn:
+        cur = conn.execute(
+            "SELECT id, filename, status, page_count, last_read_page, uploaded_at, file_path FROM documents WHERE id = ?",
+            (document_id,),
+        )
+        r = cur.fetchone()
+    if not r:
+        return None
+    return {
+        "id": r[0],
+        "filename": r[1],
+        "status": r[2],
+        "page_count": int(r[3] or 0),
+        "last_read_page": int(r[4] or 1),
+        "uploaded_at": r[5],
+        "file_path": r[6],
+    }
+
+
+def update_last_read_page(document_id: str, last_read_page: int) -> None:
+    with _get_conn() as conn:
+        conn.execute(
+            "UPDATE documents SET last_read_page = ? WHERE id = ?",
+            (last_read_page, document_id),
+        )
+        conn.commit()
 
 

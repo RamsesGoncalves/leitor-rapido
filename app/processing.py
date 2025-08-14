@@ -3,7 +3,7 @@ from typing import List, Tuple
 
 import pdfplumber
 
-from .storage import db
+from .storage import db, update_document_after_processing
 from .textutils import group_words_with_pages, preprocess_hyphens
 
 
@@ -42,5 +42,10 @@ def process_pdf(document_id: str, file_path: str) -> None:
         "file_path": file_path,
     }
     # Mantemos o arquivo para visualização posterior via endpoint
+    try:
+        update_document_after_processing(document_id, page_count, status="completed")
+    except Exception:
+        # Persistência não deve quebrar o processamento principal
+        pass
 
 

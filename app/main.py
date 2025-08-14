@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 
 from .models import DocumentStatus, DocumentUploadResponse, DocumentWords, DocumentTokens
-from .storage import db
+from .storage import db, init_db, insert_document_record, list_documents, update_document_after_processing, get_document_meta, update_last_read_page
 from .processing import process_pdf
 
 
@@ -39,6 +39,11 @@ def health() -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+@app.on_event("startup")
+def on_startup() -> None:
+    init_db()
+
+
 @app.post("/documents", response_model=DocumentUploadResponse, status_code=202)
 async def upload_document(
     background_tasks: BackgroundTasks,
@@ -55,16 +60,28 @@ async def upload_document(
         f.write(content)
 
     db[document_id] = {"status": "processing", "words": []}
+    insert_document_record(document_id, file.filename, str(dest_path), status="processing")
 
     background_tasks.add_task(process_pdf, document_id, str(dest_path))
 
     return DocumentUploadResponse(document_id=document_id, status="processing")
 
 
+@app.get("/documents")
+def list_all_documents():
+    return list_documents()
+
+
 @app.get("/documents/{document_id}/status", response_model=DocumentStatus)
 def get_document_status(document_id: str):
     if document_id not in db:
-        raise HTTPException(status_code=404, detail="Documento não encontrado")
+        # Pode ter reiniciado o servidor; tenta pegar do meta e indicar status
+        meta = get_document_meta(document_id)
+        if not meta:
+            raise HTTPException(status_code=404, detail="Documento não encontrado")
+        status = meta.get("status", "processing")
+        # Caso completed mas tokens não estejam em memória, força word_count 0
+        return DocumentStatus(status=status, word_count=0)
     entry = db[document_id]
     words = entry.get("words") or []
     status = entry.get("status", "processing")
@@ -101,13 +118,27 @@ def get_document_tokens(document_id: str):
 
 @app.get("/documents/{document_id}/file")
 def get_document_file(document_id: str):
-    if document_id not in db:
-        raise HTTPException(status_code=404, detail="Documento não encontrado")
-    entry = db[document_id]
-    file_path = entry.get("file_path")
+    # Procurar em memória e depois em meta
+    entry = db.get(document_id)
+    file_path = entry.get("file_path") if entry else None
+    if not file_path:
+        meta = get_document_meta(document_id)
+        if meta:
+            file_path = meta.get("file_path")
     if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Arquivo não disponível")
     return FileResponse(file_path, media_type="application/pdf")
+
+
+@app.post("/documents/{document_id}/progress")
+def set_last_read_page(document_id: str, page: int):
+    meta = get_document_meta(document_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Documento não encontrado")
+    if page < 1 or (meta.get("page_count") and page > meta.get("page_count")):
+        raise HTTPException(status_code=400, detail="Página inválida")
+    update_last_read_page(document_id, page)
+    return JSONResponse({"ok": True, "last_read_page": page})
 
 
 if __name__ == "__main__":

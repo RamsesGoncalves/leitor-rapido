@@ -3,6 +3,7 @@ import { MagicCard } from "./components/MagicCard";
 import { ShinyButton } from "./components/ShinyButton";
 import { countWordsInToken, endPunctuationMultiplier, complexityMultiplier } from "./lib/textUtils";
 import { PDFViewer } from "./components/PDFViewer";
+import { Sidebar } from "./components/Sidebar";
 
 type UploadResponse = { document_id: string; status: string };
 type StatusResponse = { status: string; word_count: number };
@@ -24,6 +25,7 @@ export function App() {
   const [tokenWeights, setTokenWeights] = useState<number[]>([]);
   const [groupSize, setGroupSize] = useState<number>(1); // 1, 2 ou 3 tokens por tela
   const timerRef = useRef<number | null>(null);
+  const [lastReadPage, setLastReadPage] = useState<number>(1);
 
   // Intervalo por palavra em ms
   // Duração base por palavra em ms
@@ -105,6 +107,7 @@ export function App() {
     setWords([]);
     setDisplayTokens([]);
     setCurrentIndex(0);
+    setLastReadPage(1);
   };
 
   // Polling do status e fetch das palavras
@@ -164,6 +167,18 @@ export function App() {
     if (idx >= 0) setCurrentIndex(idx);
   }, [startPage, tokenPages]);
 
+  // Atualiza progresso de página lida
+  useEffect(() => {
+    const currentPage = tokenPages[currentIndex] ?? 1;
+    setLastReadPage(currentPage);
+    if (!documentId) return;
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => {
+      fetch(`${API_BASE}/documents/${documentId}/progress?page=${currentPage}`, { method: "POST", signal: ctrl.signal }).catch(() => {});
+    }, 300);
+    return () => { clearTimeout(timeout); ctrl.abort(); };
+  }, [currentIndex, tokenPages, documentId]);
+
   const currentWord = useMemo(() => {
     const size = computeWindowSize(currentIndex);
     const windowTokens = displayTokens.slice(currentIndex, currentIndex + size);
@@ -171,12 +186,24 @@ export function App() {
   }, [displayTokens, currentIndex, computeWindowSize]);
 
   return (
-    <div className="container mx-auto max-w-4xl px-4 py-8">
+    <div className="container mx-auto px-4 py-6 sm:py-8">
       <header className="mb-8">
         <h1 className="text-2xl font-semibold">Leitor Rápido</h1>
         <p className="text-zinc-400">Envie um PDF e reproduza as palavras no ritmo desejado (PPM).</p>
       </header>
 
+      <div className="grid gap-6 sm:grid-cols-[1fr] lg:grid-cols-[18rem_1fr]">
+        <div className="order-2 lg:order-1">
+          <Sidebar
+            apiBase={API_BASE}
+            activeId={documentId}
+            onSelect={(doc) => {
+              setDocumentId(doc.id);
+              setStartPage(Math.max(1, (doc as any).last_read_page || 1));
+            }}
+          />
+        </div>
+        <div className="order-1 lg:order-2">
       <div className="grid gap-6">
         <MagicCard className="p-6">
           <div className="flex items-center gap-4">
@@ -305,6 +332,8 @@ export function App() {
             />
           </MagicCard>
         )}
+      </div>
+        </div>
       </div>
     </div>
   );
