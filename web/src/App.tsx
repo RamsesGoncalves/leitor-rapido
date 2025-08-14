@@ -193,8 +193,8 @@ export function App() {
           </div>
           <div className="mt-4 text-sm text-zinc-400">
             {documentId && (
-              <div className="flex items-center justify-between">
-                <span>ID: {documentId}</span>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 sm:items-center">
+                <span className="break-all">ID: {documentId}</span>
                 <span>Status: {status?.status ?? "-"}</span>
                 <span>Palavras: {status?.word_count ?? 0}</span>
               </div>
@@ -204,11 +204,11 @@ export function App() {
 
         <MagicCard className="p-6">
           <div className="flex flex-col items-center gap-4">
-            <div className="text-5xl font-bold h-20 flex items-center justify-center">
+            <div className="text-3xl sm:text-5xl font-bold min-h-[3.5rem] sm:min-h-[5rem] flex items-center justify-center text-center break-words px-2">
               {currentWord || "—"}
             </div>
             {showNextPreview && (
-              <div className="text-sm text-zinc-500 mt-1">
+              <div className="text-sm text-zinc-500 mt-1 px-2 text-center break-words">
                 {(() => {
                   const currentSize = computeWindowSize(currentIndex);
                   const nextStart = currentIndex + currentSize;
@@ -219,8 +219,8 @@ export function App() {
                 })()}
               </div>
             )}
-            <div className="flex w-full items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
+            <div className="grid w-full gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2">
                 <label htmlFor="wpm" className="text-sm text-zinc-400">PPM</label>
                 <input
                   id="wpm"
@@ -230,16 +230,16 @@ export function App() {
                   step={10}
                   value={wpm}
                   onChange={(e) => setWpm(Number(e.target.value))}
-                  className="w-28 rounded-md bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-inset ring-zinc-700 focus:ring-2"
+                  className="w-full sm:w-28 rounded-md bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-inset ring-zinc-700 focus:ring-2"
                 />
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2">
                 <label htmlFor="groupSize" className="text-sm text-zinc-400">Palavras por tela</label>
                 <select
                   id="groupSize"
                   value={groupSize}
                   onChange={(e) => setGroupSize(Number(e.target.value))}
-                  className="rounded-md bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-inset ring-zinc-700 focus:ring-2"
+                  className="w-full sm:w-auto rounded-md bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-inset ring-zinc-700 focus:ring-2"
                 >
                   <option value={1}>1</option>
                   <option value={2}>2</option>
@@ -256,7 +256,7 @@ export function App() {
                   className="h-4 w-4"
                 />
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-2">
                 <label htmlFor="startPage" className="text-sm text-zinc-400">Página inicial</label>
                 <input
                   id="startPage"
@@ -265,10 +265,10 @@ export function App() {
                   max={Math.max(1, pageCount)}
                   value={startPage}
                   onChange={(e) => setStartPage(Number(e.target.value))}
-                  className="w-28 rounded-md bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-inset ring-zinc-700 focus:ring-2"
+                  className="w-full sm:w-28 rounded-md bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-inset ring-zinc-700 focus:ring-2"
                 />
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 sm:col-span-2 lg:col-span-3 justify-center sm:justify-start">
                 <ShinyButton onClick={() => setIsPlaying((p) => !p)}>
                   {isPlaying ? "Pausar" : "Reproduzir"}
                 </ShinyButton>
@@ -294,7 +294,7 @@ export function App() {
 
         {documentId && (
           <MagicCard className="p-2">
-            <div className="flex items-center justify-between px-4 py-2 text-sm text-zinc-400">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-sm text-zinc-400">
               <div>Página atual: {tokenPages[currentIndex] ?? 1} / {pageCount || "?"}</div>
               <div>Visualização do PDF</div>
             </div>

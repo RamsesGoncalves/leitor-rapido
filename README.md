@@ -14,6 +14,10 @@ Sistema de leitura rápida de PDFs com controle de velocidade e tokenização in
 - **Navegação**: Play/pause, anterior/próxima, salto por página
 - **Preview**: Visualização da próxima janela
 - **PDF Integrado**: Sincronização com página atual
+ - **Barra Lateral Persistente**: lista seus PDFs processados, progresso (última página/índice) e exclusão
+ - **Salvamento Automático**: o progresso é salvo conforme você lê
+ - **Atualização Automática**: a lista de documentos atualiza periodicamente e após uploads
+ - **Responsivo**: layout adaptado para desktop e dispositivos móveis
 
 ## 🛠️ Tecnologias
 
@@ -22,6 +26,7 @@ Sistema de leitura rápida de PDFs com controle de velocidade e tokenização in
 - **FastAPI**: API REST
 - **pdfplumber**: Extração de texto de PDF
 - **Uvicorn**: Servidor ASGI
+ - **SQLite**: Persistência simples (metadados e progresso)
 
 ### Frontend
 - **React 18**: Interface de usuário
@@ -29,6 +34,7 @@ Sistema de leitura rápida de PDFs com controle de velocidade e tokenização in
 - **Vite**: Build tool
 - **Tailwind CSS**: Estilização
 - **Framer Motion**: Animações
+ - **MagicUI**: Cartões e componentes com visual moderno
 
 ## 🚀 Como Executar
 
@@ -52,6 +58,17 @@ npm run dev
 
 Acesse: http://localhost:5173
 
+## 🗄️ Persistência e Estrutura
+
+- O backend cria automaticamente um banco SQLite em `data/db.sqlite3` no startup.
+- PDFs enviados vão para `uploads/` e os tokens/weights são salvos como JSON `*_tokens.json`.
+- Endpoints principais:
+  - `POST /documents` — faz upload e inicia processamento
+  - `GET /documents` — lista documentos com status e progresso
+  - `GET /documents/{id}/status|words|tokens|file` — dados do documento
+  - `POST /documents/{id}/progress?last_index&last_page` — salva progresso
+  - `DELETE /documents/{id}` — remove o documento do catálogo
+
 ## 📋 Regras de Tokenização
 
 1. **Monossílabos**: Agrupam com próxima palavra ("em casa")
@@ -59,6 +76,16 @@ Acesse: http://localhost:5173
 3. **Pontuação**: Multiplicadores de tempo por contexto
 4. **Ponto Final**: Sempre encerra a janela de visualização
 5. **Complexidade**: Ajuste de tempo por tamanho da palavra
+
+## 📱 Responsividade
+
+- A UI utiliza grid responsivo; em telas grandes a barra lateral fica fixa, em mobile ela recolhe e aparece acima do player.
+- Componentes com `MagicCard` e transições suaves com `framer-motion`.
+
+## 🔐 Boas práticas
+
+- Não faça commit de `.env` ou dados sensíveis.
+- `uploads/*.pdf` e `data/db.sqlite3` permanecem fora do Git (checar `.gitignore`).
 
 ## 🎯 Configurações
 
