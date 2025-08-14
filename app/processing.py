@@ -60,21 +60,19 @@ def _extract_words_with_pages_epub(file_path: str) -> Tuple[List[str], List[int]
     except Exception:
         raise ValueError("EPUB não suportado: instale 'ebooklib' e 'beautifulsoup4'")
     book = epub.read_epub(file_path)
-    words: List[str] = []
-    pages: List[int] = []
-    current_page = 1
+    all_words: List[str] = []
     for item in book.get_items_of_type(9):  # 9 = DOCUMENT
         try:
             html = item.get_content().decode("utf-8", errors="ignore")
         except Exception:
             continue
         text = BeautifulSoup(html, "html.parser").get_text(separator=" ")
-        chapter_words = [w for w in text.replace("\n", " ").split(" ") if w]
-        words.extend(chapter_words)
-        pages.extend([current_page] * len(chapter_words))
-        current_page += 1
-    page_count = current_page - 1
-    return words, pages, page_count
+        words = [w for w in text.replace("\r\n", " ").replace("\n", " ").split(" ") if w]
+        all_words.extend(words)
+    words_per_page = 300
+    pages = [max(1, (i // words_per_page) + 1) for i in range(len(all_words))]
+    page_count = max(pages) if pages else 0
+    return all_words, pages, page_count
 
 
 def process_pdf(document_id: str, file_path: str) -> None:

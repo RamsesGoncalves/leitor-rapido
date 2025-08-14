@@ -35,7 +35,8 @@ def init_db() -> None:
                 uploaded_at TEXT NOT NULL,
                 status TEXT NOT NULL,
                 page_count INTEGER DEFAULT 0,
-                last_read_page INTEGER DEFAULT 1
+                last_read_page INTEGER DEFAULT 1,
+                last_token_index INTEGER DEFAULT 0
             )
             """
         )
@@ -45,6 +46,8 @@ def init_db() -> None:
             cols = [r[1] for r in cur.fetchall()]
             if "mime_type" not in cols:
                 conn.execute("ALTER TABLE documents ADD COLUMN mime_type TEXT")
+            if "last_token_index" not in cols:
+                conn.execute("ALTER TABLE documents ADD COLUMN last_token_index INTEGER DEFAULT 0")
         except Exception:
             pass
         conn.commit()
@@ -72,7 +75,7 @@ def update_document_after_processing(document_id: str, page_count: int, status: 
 def list_documents() -> List[Dict[str, Any]]:
     with _get_conn() as conn:
         cur = conn.execute(
-            "SELECT id, filename, status, page_count, last_read_page, uploaded_at, mime_type FROM documents ORDER BY uploaded_at DESC"
+            "SELECT id, filename, status, page_count, last_read_page, uploaded_at, mime_type, last_token_index FROM documents ORDER BY uploaded_at DESC"
         )
         rows = cur.fetchall()
     documents = [
@@ -84,6 +87,7 @@ def list_documents() -> List[Dict[str, Any]]:
             "last_read_page": int(r[4] or 1),
             "uploaded_at": r[5],
             "mime_type": r[6],
+            "last_token_index": int(r[7] or 0),
         }
         for r in rows
     ]
@@ -93,7 +97,7 @@ def list_documents() -> List[Dict[str, Any]]:
 def get_document_meta(document_id: str) -> Optional[Dict[str, Any]]:
     with _get_conn() as conn:
         cur = conn.execute(
-            "SELECT id, filename, status, page_count, last_read_page, uploaded_at, file_path, mime_type FROM documents WHERE id = ?",
+            "SELECT id, filename, status, page_count, last_read_page, uploaded_at, file_path, mime_type, last_token_index FROM documents WHERE id = ?",
             (document_id,),
         )
         r = cur.fetchone()
@@ -108,7 +112,19 @@ def get_document_meta(document_id: str) -> Optional[Dict[str, Any]]:
         "uploaded_at": r[5],
         "file_path": r[6],
         "mime_type": r[7],
+        "last_token_index": int(r[8] or 0),
     }
+def update_progress(document_id: str, last_read_page: int | None = None, last_token_index: int | None = None) -> None:
+    with _get_conn() as conn:
+        if last_read_page is not None and last_token_index is not None:
+            conn.execute("UPDATE documents SET last_read_page = ?, last_token_index = ? WHERE id = ?", (last_read_page, last_token_index, document_id))
+        elif last_read_page is not None:
+            conn.execute("UPDATE documents SET last_read_page = ? WHERE id = ?", (last_read_page, document_id))
+        elif last_token_index is not None:
+            conn.execute("UPDATE documents SET last_token_index = ? WHERE id = ?", (last_token_index, document_id))
+        else:
+            return
+        conn.commit()
 
 
 def update_last_read_page(document_id: str, last_read_page: int) -> None:

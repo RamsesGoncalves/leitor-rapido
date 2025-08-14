@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi import status
 
 from .models import DocumentStatus, DocumentUploadResponse, DocumentWords, DocumentTokens
-from .storage import db, init_db, insert_document_record, list_documents, update_document_after_processing, get_document_meta, update_last_read_page, delete_document_record, load_tokens_cache
+from .storage import db, init_db, insert_document_record, list_documents, update_document_after_processing, get_document_meta, update_last_read_page, delete_document_record, load_tokens_cache, update_progress
 from .processing import process_pdf
 
 
@@ -179,14 +179,14 @@ def get_document_file(document_id: str):
 
 
 @app.post("/documents/{document_id}/progress")
-def set_last_read_page(document_id: str, page: int):
+def set_last_read_page(document_id: str, page: int, token_index: int | None = None):
     meta = get_document_meta(document_id)
     if not meta:
         raise HTTPException(status_code=404, detail="Documento não encontrado")
     if page < 1 or (meta.get("page_count") and page > meta.get("page_count")):
         raise HTTPException(status_code=400, detail="Página inválida")
-    update_last_read_page(document_id, page)
-    return JSONResponse({"ok": True, "last_read_page": page})
+    update_progress(document_id, last_read_page=page, last_token_index=token_index)
+    return JSONResponse({"ok": True, "last_read_page": page, "last_token_index": token_index})
 
 
 @app.delete("/documents/{document_id}")

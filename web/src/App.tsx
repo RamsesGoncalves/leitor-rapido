@@ -30,6 +30,8 @@ export function App() {
   const [suppressProgressSync, setSuppressProgressSync] = useState<boolean>(false);
   const [toast, setToast] = useState<string | null>(null);
   const [currentMime, setCurrentMime] = useState<string | null>(null);
+  const [lastTokenIndex, setLastTokenIndex] = useState<number>(0);
+  const [startPageDirty, setStartPageDirty] = useState<boolean>(false);
 
   // Intervalo por palavra em ms
   // Duração base por palavra em ms
@@ -159,8 +161,10 @@ export function App() {
             setTokenPages(tdata.pages ?? []);
             setPageCount(tdata.page_count ?? 0);
             setTokenWeights(tdata.weights ?? Array(tdata.tokens.length).fill(1));
-            // mantém a página inicial escolhida se existir, caso contrário 0
-            if (startPage > 1 && (tdata.pages?.length ?? 0) > 0) {
+            // prioridade: token salvo > startPage > início
+            if (lastTokenIndex > 0 && lastTokenIndex < (tdata.tokens?.length ?? 0)) {
+              setCurrentIndex(lastTokenIndex);
+            } else if (startPage > 1 && (tdata.pages?.length ?? 0) > 0) {
               const idx = (tdata.pages ?? []).findIndex((p) => p >= startPage);
               setCurrentIndex(Math.max(0, idx));
             } else {
@@ -178,14 +182,24 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [documentId, status?.status, startPage]);
+  }, [documentId, status?.status, startPage, lastTokenIndex]);
 
   // Salto para página inicial selecionada
   useEffect(() => {
     if (!tokenPages.length) return;
+    if (lastTokenIndex > 0 && !startPageDirty) return;
     const idx = tokenPages.findIndex((p) => p >= startPage);
-    if (idx >= 0) setCurrentIndex(idx);
-  }, [startPage, tokenPages]);
+    if (idx >= 0) {
+      setCurrentIndex(idx);
+      if (documentId && startPageDirty) {
+        const ctrl = new AbortController();
+        fetch(`${API_BASE}/documents/${documentId}/progress?page=${tokenPages[idx]}&token_index=${idx}`,
+          { method: "POST", signal: ctrl.signal }).catch(() => {});
+        setStartPageDirty(false);
+        setLastTokenIndex(0);
+      }
+    }
+  }, [startPage, tokenPages, lastTokenIndex, startPageDirty, documentId]);
 
   // Atualiza progresso de página lida
   useEffect(() => {
@@ -195,7 +209,7 @@ export function App() {
     if (suppressProgressSync) return;
     const ctrl = new AbortController();
     const timeout = setTimeout(() => {
-      fetch(`${API_BASE}/documents/${documentId}/progress?page=${currentPage}`, { method: "POST", signal: ctrl.signal }).catch(() => {});
+      fetch(`${API_BASE}/documents/${documentId}/progress?page=${currentPage}&token_index=${currentIndex}`, { method: "POST", signal: ctrl.signal }).catch(() => {});
     }, 300);
     return () => { clearTimeout(timeout); ctrl.abort(); };
   }, [currentIndex, tokenPages, documentId, suppressProgressSync]);
@@ -223,6 +237,7 @@ export function App() {
               setDocumentId(doc.id);
               setStartPage(Math.max(1, (doc as any).last_read_page || 1));
               setCurrentMime((doc as any).mime_type ?? null);
+              setLastTokenIndex((doc as any).last_token_index ?? 0);
             }}
             onDeleted={(docId) => {
               if (documentId === docId) {
@@ -327,7 +342,7 @@ export function App() {
                   min={1}
                   max={Math.max(1, pageCount)}
                   value={startPage}
-                  onChange={(e) => setStartPage(Number(e.target.value))}
+                  onChange={(e) => { setStartPage(Number(e.target.value)); setStartPageDirty(true); setLastTokenIndex(0); }}
                   className="w-full sm:w-28 rounded-md bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-inset ring-zinc-700 focus:ring-2"
                 />
               </div>
