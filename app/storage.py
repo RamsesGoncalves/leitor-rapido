@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional
 from pathlib import Path
 import sqlite3
 from datetime import datetime
+import json
 
 
 # Banco de dados em memória para conteúdo processado (tokens/words)
@@ -14,6 +15,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SQLITE_PATH = DATA_DIR / "leitor.db"
+TOKENS_DIR = DATA_DIR / "tokens"
+TOKENS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -104,5 +107,38 @@ def update_last_read_page(document_id: str, last_read_page: int) -> None:
             (last_read_page, document_id),
         )
         conn.commit()
+
+
+def delete_document_record(document_id: str) -> None:
+    with _get_conn() as conn:
+        conn.execute("DELETE FROM documents WHERE id = ?", (document_id,))
+        conn.commit()
+
+
+def save_tokens_cache(document_id: str, *, tokens: List[str], token_pages: List[int], token_weights: List[int], page_count: int) -> None:
+    payload = {
+        "tokens": tokens,
+        "pages": token_pages,
+        "weights": token_weights,
+        "page_count": page_count,
+    }
+    target = TOKENS_DIR / f"{document_id}.json"
+    with open(target, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+
+
+def load_tokens_cache(document_id: str) -> Optional[Dict[str, Any]]:
+    target = TOKENS_DIR / f"{document_id}.json"
+    if not target.exists():
+        return None
+    try:
+        with open(target, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # validações mínimas
+        if not isinstance(data.get("tokens"), list):
+            return None
+        return data
+    except Exception:
+        return None
 
 

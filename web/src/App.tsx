@@ -4,6 +4,7 @@ import { ShinyButton } from "./components/ShinyButton";
 import { countWordsInToken, endPunctuationMultiplier, complexityMultiplier } from "./lib/textUtils";
 import { PDFViewer } from "./components/PDFViewer";
 import { Sidebar } from "./components/Sidebar";
+import { Toast } from "./components/Toast";
 
 type UploadResponse = { document_id: string; status: string };
 type StatusResponse = { status: string; word_count: number };
@@ -26,6 +27,8 @@ export function App() {
   const [groupSize, setGroupSize] = useState<number>(1); // 1, 2 ou 3 tokens por tela
   const timerRef = useRef<number | null>(null);
   const [lastReadPage, setLastReadPage] = useState<number>(1);
+  const [suppressProgressSync, setSuppressProgressSync] = useState<boolean>(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   // Intervalo por palavra em ms
   // Duração base por palavra em ms
@@ -109,6 +112,7 @@ export function App() {
     setCurrentIndex(0);
     setStartPage(1);
     setLastReadPage(1);
+    setSuppressProgressSync(false);
   };
 
   // Polling do status e fetch das palavras
@@ -141,6 +145,8 @@ export function App() {
   useEffect(() => {
     if (!documentId || status?.status !== "completed") return;
     let cancelled = false;
+    // Evita sincronizar progresso enquanto inicializa novo documento
+    setSuppressProgressSync(true);
     (async () => {
       try {
         const tres = await fetch(`${API_BASE}/documents/${documentId}/tokens`);
@@ -151,15 +157,26 @@ export function App() {
             setTokenPages(tdata.pages ?? []);
             setPageCount(tdata.page_count ?? 0);
             setTokenWeights(tdata.weights ?? Array(tdata.tokens.length).fill(1));
-            setCurrentIndex(0);
+            // mantém a página inicial escolhida se existir, caso contrário 0
+            if (startPage > 1 && (tdata.pages?.length ?? 0) > 0) {
+              const idx = (tdata.pages ?? []).findIndex((p) => p >= startPage);
+              setCurrentIndex(Math.max(0, idx));
+            } else {
+              setCurrentIndex(0);
+            }
+            // Libera sincronização após um micro delay para garantir currentIndex aplicado
+            setTimeout(() => setSuppressProgressSync(false), 0);
+            setToast("Documento carregado");
           }
+        } else {
+          setToast("Carregando do cache/arquivo...");
         }
       } catch {}
     })();
     return () => {
       cancelled = true;
     };
-  }, [documentId, status?.status]);
+  }, [documentId, status?.status, startPage]);
 
   // Salto para página inicial selecionada
   useEffect(() => {
@@ -173,12 +190,13 @@ export function App() {
     const currentPage = tokenPages[currentIndex] ?? 1;
     setLastReadPage(currentPage);
     if (!documentId) return;
+    if (suppressProgressSync) return;
     const ctrl = new AbortController();
     const timeout = setTimeout(() => {
       fetch(`${API_BASE}/documents/${documentId}/progress?page=${currentPage}`, { method: "POST", signal: ctrl.signal }).catch(() => {});
     }, 300);
     return () => { clearTimeout(timeout); ctrl.abort(); };
-  }, [currentIndex, tokenPages, documentId]);
+  }, [currentIndex, tokenPages, documentId, suppressProgressSync]);
 
   const currentWord = useMemo(() => {
     const size = computeWindowSize(currentIndex);
@@ -188,6 +206,7 @@ export function App() {
 
   return (
     <div className="container mx-auto px-4 py-6 sm:py-8">
+      {toast && <Toast message={toast} onClose={() => setToast(null)} />}
       <header className="mb-8">
         <h1 className="text-2xl font-semibold">Leitor Rápido</h1>
         <p className="text-zinc-400">Envie um PDF e reproduza as palavras no ritmo desejado (PPM).</p>
@@ -201,6 +220,18 @@ export function App() {
             onSelect={(doc) => {
               setDocumentId(doc.id);
               setStartPage(Math.max(1, (doc as any).last_read_page || 1));
+            }}
+            onDeleted={(docId) => {
+              if (documentId === docId) {
+                setDocumentId(null);
+                setStatus(null);
+                setWords([]);
+                setDisplayTokens([]);
+                setTokenPages([]);
+                setPageCount(0);
+                setCurrentIndex(0);
+                setStartPage(1);
+              }
             }}
           />
         </div>

@@ -3,7 +3,7 @@ from typing import List, Tuple
 
 import pdfplumber
 
-from .storage import db, update_document_after_processing
+from .storage import db, update_document_after_processing, save_tokens_cache
 from .textutils import group_words_with_pages, preprocess_hyphens
 
 
@@ -46,6 +46,16 @@ def process_pdf(document_id: str, file_path: str) -> None:
         update_document_after_processing(document_id, page_count, status="completed")
     except Exception:
         # Persistência não deve quebrar o processamento principal
+        pass
+    try:
+        save_tokens_cache(
+            document_id,
+            tokens=tokens,
+            token_pages=token_pages,
+            token_weights=token_weights,
+            page_count=page_count,
+        )
+    except Exception:
         pass
 
 

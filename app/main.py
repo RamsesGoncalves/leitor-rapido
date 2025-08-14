@@ -6,9 +6,10 @@ from typing import Optional
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
+from fastapi import status
 
 from .models import DocumentStatus, DocumentUploadResponse, DocumentWords, DocumentTokens
-from .storage import db, init_db, insert_document_record, list_documents, update_document_after_processing, get_document_meta, update_last_read_page
+from .storage import db, init_db, insert_document_record, list_documents, update_document_after_processing, get_document_meta, update_last_read_page, delete_document_record, load_tokens_cache
 from .processing import process_pdf
 
 
@@ -92,7 +93,25 @@ def get_document_status(document_id: str):
 @app.get("/documents/{document_id}/words", response_model=DocumentWords)
 def get_document_words(document_id: str):
     if document_id not in db:
-        raise HTTPException(status_code=404, detail="Documento não encontrado")
+        cached = load_tokens_cache(document_id)
+        if cached is not None:
+            db[document_id] = {
+                "status": "completed",
+                "words": [],
+                "tokens": cached.get("tokens", []),
+                "token_pages": cached.get("pages", []),
+                "token_weights": cached.get("weights", []),
+                "page_count": cached.get("page_count", 0),
+            }
+        else:
+            # tenta reprocessar do disco
+            meta = get_document_meta(document_id)
+            if not meta or not meta.get("file_path") or not os.path.exists(meta["file_path"]):
+                raise HTTPException(status_code=404, detail="Documento não encontrado")
+            try:
+                process_pdf(document_id, meta["file_path"])  # repopula memória
+            except Exception:
+                raise HTTPException(status_code=422, detail="Falha ao carregar documento")
     entry = db[document_id]
     status = entry.get("status", "processing")
     if status != "completed":
@@ -104,7 +123,25 @@ def get_document_words(document_id: str):
 @app.get("/documents/{document_id}/tokens", response_model=DocumentTokens)
 def get_document_tokens(document_id: str):
     if document_id not in db:
-        raise HTTPException(status_code=404, detail="Documento não encontrado")
+        cached = load_tokens_cache(document_id)
+        if cached is not None:
+            db[document_id] = {
+                "status": "completed",
+                "words": [],
+                "tokens": cached.get("tokens", []),
+                "token_pages": cached.get("pages", []),
+                "token_weights": cached.get("weights", []),
+                "page_count": cached.get("page_count", 0),
+            }
+        else:
+            # tenta reprocessar do disco
+            meta = get_document_meta(document_id)
+            if not meta or not meta.get("file_path") or not os.path.exists(meta["file_path"]):
+                raise HTTPException(status_code=404, detail="Documento não encontrado")
+            try:
+                process_pdf(document_id, meta["file_path"])  # repopula memória
+            except Exception:
+                raise HTTPException(status_code=422, detail="Falha ao carregar documento")
     entry = db[document_id]
     status = entry.get("status", "processing")
     if status != "completed":
@@ -140,6 +177,28 @@ def set_last_read_page(document_id: str, page: int):
     update_last_read_page(document_id, page)
     return JSONResponse({"ok": True, "last_read_page": page})
 
+
+@app.delete("/documents/{document_id}")
+def delete_document(document_id: str):
+    meta = get_document_meta(document_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Documento não encontrado")
+    file_path = meta.get("file_path")
+    # remove do armazenamento em memória
+    if document_id in db:
+        try:
+            del db[document_id]
+        except Exception:
+            pass
+    # remove do disco
+    if file_path and os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
+    # remove do banco
+    delete_document_record(document_id)
+    return JSONResponse({"ok": True}, status_code=status.HTTP_200_OK)
 
 if __name__ == "__main__":
     import uvicorn
