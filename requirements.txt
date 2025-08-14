@@ -5,4 +5,7 @@ pdfplumber
 pydantic
 jinja2
 aiofiles
+markdown
+beautifulsoup4
+ebooklib
 

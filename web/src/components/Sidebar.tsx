@@ -8,6 +8,7 @@ type DocItem = {
   page_count: number;
   last_read_page: number;
   uploaded_at: string;
+  mime_type?: string | null;
 };
 
 type SidebarProps = {
@@ -63,9 +64,9 @@ export function Sidebar({ apiBase, activeId, onSelect, onDeleted }: SidebarProps
               }`}>
                 <div className="flex items-start gap-2">
                   <button onClick={() => onSelect(d)} className="flex-1 text-left">
-                    <div className="text-sm font-medium break-all">{d.filename}</div>
+                <div className="text-sm font-medium break-all">{d.filename}</div>
                     <div className="mt-1 text-xs text-zinc-400 flex items-center justify-between">
-                      <span>Status: {d.status}</span>
+                  <span>Status: {d.status}{d.mime_type ? ` • ${d.mime_type}` : ""}</span>
                       <span>{d.last_read_page} / {d.page_count || "?"}</span>
                     </div>
                     <div className="mt-1 h-1.5 w-full bg-zinc-800 rounded">

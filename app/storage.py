@@ -31,6 +31,7 @@ def init_db() -> None:
                 id TEXT PRIMARY KEY,
                 filename TEXT NOT NULL,
                 file_path TEXT NOT NULL,
+                mime_type TEXT,
                 uploaded_at TEXT NOT NULL,
                 status TEXT NOT NULL,
                 page_count INTEGER DEFAULT 0,
@@ -38,15 +39,23 @@ def init_db() -> None:
             )
             """
         )
+        # Migração leve: garantir coluna mime_type
+        try:
+            cur = conn.execute("PRAGMA table_info(documents)")
+            cols = [r[1] for r in cur.fetchall()]
+            if "mime_type" not in cols:
+                conn.execute("ALTER TABLE documents ADD COLUMN mime_type TEXT")
+        except Exception:
+            pass
         conn.commit()
 
 
-def insert_document_record(document_id: str, filename: str, file_path: str, status: str = "processing") -> None:
+def insert_document_record(document_id: str, filename: str, file_path: str, mime_type: str | None, status: str = "processing") -> None:
     uploaded_at = datetime.utcnow().isoformat()
     with _get_conn() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO documents (id, filename, file_path, uploaded_at, status, page_count, last_read_page) VALUES (?, ?, ?, ?, COALESCE((SELECT status FROM documents WHERE id = ?), ?), COALESCE((SELECT page_count FROM documents WHERE id = ?), 0), COALESCE((SELECT last_read_page FROM documents WHERE id = ?), 1))",
-            (document_id, filename, file_path, uploaded_at, document_id, status, document_id, document_id),
+            "INSERT OR REPLACE INTO documents (id, filename, file_path, mime_type, uploaded_at, status, page_count, last_read_page) VALUES (?, ?, ?, ?, ?, COALESCE((SELECT status FROM documents WHERE id = ?), ?), COALESCE((SELECT page_count FROM documents WHERE id = ?), 0), COALESCE((SELECT last_read_page FROM documents WHERE id = ?), 1))",
+            (document_id, filename, file_path, mime_type, uploaded_at, document_id, status, document_id, document_id),
         )
         conn.commit()
 
@@ -63,7 +72,7 @@ def update_document_after_processing(document_id: str, page_count: int, status: 
 def list_documents() -> List[Dict[str, Any]]:
     with _get_conn() as conn:
         cur = conn.execute(
-            "SELECT id, filename, status, page_count, last_read_page, uploaded_at FROM documents ORDER BY uploaded_at DESC"
+            "SELECT id, filename, status, page_count, last_read_page, uploaded_at, mime_type FROM documents ORDER BY uploaded_at DESC"
         )
         rows = cur.fetchall()
     documents = [
@@ -74,6 +83,7 @@ def list_documents() -> List[Dict[str, Any]]:
             "page_count": int(r[3] or 0),
             "last_read_page": int(r[4] or 1),
             "uploaded_at": r[5],
+            "mime_type": r[6],
         }
         for r in rows
     ]
@@ -83,7 +93,7 @@ def list_documents() -> List[Dict[str, Any]]:
 def get_document_meta(document_id: str) -> Optional[Dict[str, Any]]:
     with _get_conn() as conn:
         cur = conn.execute(
-            "SELECT id, filename, status, page_count, last_read_page, uploaded_at, file_path FROM documents WHERE id = ?",
+            "SELECT id, filename, status, page_count, last_read_page, uploaded_at, file_path, mime_type FROM documents WHERE id = ?",
             (document_id,),
         )
         r = cur.fetchone()
@@ -97,6 +107,7 @@ def get_document_meta(document_id: str) -> Optional[Dict[str, Any]]:
         "last_read_page": int(r[4] or 1),
         "uploaded_at": r[5],
         "file_path": r[6],
+        "mime_type": r[7],
     }
 
 

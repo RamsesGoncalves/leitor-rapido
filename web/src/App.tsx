@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MagicCard } from "./components/MagicCard";
 import { ShinyButton } from "./components/ShinyButton";
 import { countWordsInToken, endPunctuationMultiplier, complexityMultiplier } from "./lib/textUtils";
-import { PDFViewer } from "./components/PDFViewer";
+import { PDFOrTextViewer } from "./components/PDFOrTextViewer";
 import { Sidebar } from "./components/Sidebar";
 import { Toast } from "./components/Toast";
 
@@ -29,6 +29,7 @@ export function App() {
   const [lastReadPage, setLastReadPage] = useState<number>(1);
   const [suppressProgressSync, setSuppressProgressSync] = useState<boolean>(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [currentMime, setCurrentMime] = useState<string | null>(null);
 
   // Intervalo por palavra em ms
   // Duração base por palavra em ms
@@ -107,6 +108,7 @@ export function App() {
     const data: UploadResponse = await res.json();
     setDocumentId(data.document_id);
     setStatus({ status: data.status, word_count: 0 });
+    setCurrentMime(file.type || null);
     setWords([]);
     setDisplayTokens([]);
     setCurrentIndex(0);
@@ -220,6 +222,7 @@ export function App() {
             onSelect={(doc) => {
               setDocumentId(doc.id);
               setStartPage(Math.max(1, (doc as any).last_read_page || 1));
+              setCurrentMime((doc as any).mime_type ?? null);
             }}
             onDeleted={(docId) => {
               if (documentId === docId) {
@@ -231,6 +234,7 @@ export function App() {
                 setPageCount(0);
                 setCurrentIndex(0);
                 setStartPage(1);
+                setCurrentMime(null);
               }
             }}
           />
@@ -242,7 +246,7 @@ export function App() {
             <input
               id="file"
               type="file"
-              accept="application/pdf"
+              accept="application/pdf,text/plain,text/markdown,application/epub+zip,.txt,.md,.epub"
               className="block w-full text-sm text-zinc-300 file:mr-4 file:rounded-md file:border-0 file:bg-zinc-800 file:px-4 file:py-2 file:text-zinc-100 hover:file:bg-zinc-700"
               onChange={(e) => {
                 const f = e.target.files?.[0];
@@ -355,12 +359,12 @@ export function App() {
           <MagicCard className="p-2">
             <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-sm text-zinc-400">
               <div>Página atual: {tokenPages[currentIndex] ?? 1} / {pageCount || "?"}</div>
-              <div>Visualização do PDF</div>
+              <div>Visualização</div>
             </div>
-            <PDFViewer
+            <PDFOrTextViewer
+              type={currentMime ?? undefined}
               url={`${API_BASE}/documents/${documentId}/file`}
               page={tokenPages[currentIndex] ?? 1}
-              className="w-full h-auto"
             />
           </MagicCard>
         )}

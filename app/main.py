@@ -50,18 +50,29 @@ async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
 ):
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Somente PDFs são aceitos")
+    allowed = {"application/pdf", "text/plain", "text/markdown", "application/epub+zip"}
+    if file.content_type not in allowed:
+        raise HTTPException(status_code=400, detail="Formato não suportado")
 
     document_id = str(uuid.uuid4())
-    dest_path = UPLOADS_DIR / f"{document_id}.pdf"
+    # Determina extensão correta
+    from pathlib import Path as _Path
+    original_suffix = _Path(file.filename or "").suffix.lower()
+    mime_to_ext = {
+        "application/pdf": ".pdf",
+        "text/plain": ".txt",
+        "text/markdown": ".md",
+        "application/epub+zip": ".epub",
+    }
+    ext = original_suffix if original_suffix in {".pdf", ".txt", ".md", ".epub"} else mime_to_ext.get(file.content_type, ".bin")
+    dest_path = UPLOADS_DIR / f"{document_id}{ext}"
 
     content = await file.read()
     with open(dest_path, "wb") as f:
         f.write(content)
 
     db[document_id] = {"status": "processing", "words": []}
-    insert_document_record(document_id, file.filename, str(dest_path), status="processing")
+    insert_document_record(document_id, file.filename, str(dest_path), file.content_type, status="processing")
 
     background_tasks.add_task(process_pdf, document_id, str(dest_path))
 
