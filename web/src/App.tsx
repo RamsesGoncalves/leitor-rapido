@@ -107,6 +107,7 @@ export function App() {
     setWords([]);
     setDisplayTokens([]);
     setCurrentIndex(0);
+    setStartPage(1);
     setLastReadPage(1);
   };
 
