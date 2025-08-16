@@ -2,12 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MagicCard } from "./components/MagicCard";
 import { ShinyButton } from "./components/ShinyButton";
 import { countWordsInToken, endPunctuationMultiplier, complexityMultiplier } from "./lib/textUtils";
-import { PDFViewer } from "./components/PDFViewer";
+import { PDFOrTextViewer } from "./components/PDFOrTextViewer";
+import { Sidebar } from "./components/Sidebar";
+import { Toast } from "./components/Toast";
 
 type UploadResponse = { document_id: string; status: string };
 type StatusResponse = { status: string; word_count: number };
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
+// Define a URL base da API. Se não houver VITE_API_BASE, usa o host atual com porta 8000.
+const DEFAULT_API_BASE = `http://${window.location.hostname}:8000`;
+const API_BASE = import.meta.env.VITE_API_BASE ?? DEFAULT_API_BASE;
 
 export function App() {
   const [documentId, setDocumentId] = useState<string | null>(null);
@@ -24,6 +28,12 @@ export function App() {
   const [tokenWeights, setTokenWeights] = useState<number[]>([]);
   const [groupSize, setGroupSize] = useState<number>(1); // 1, 2 ou 3 tokens por tela
   const timerRef = useRef<number | null>(null);
+  const [lastReadPage, setLastReadPage] = useState<number>(1);
+  const [suppressProgressSync, setSuppressProgressSync] = useState<boolean>(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [currentMime, setCurrentMime] = useState<string | null>(null);
+  const [lastTokenIndex, setLastTokenIndex] = useState<number>(0);
+  const [startPageDirty, setStartPageDirty] = useState<boolean>(false);
 
   // Intervalo por palavra em ms
   // Duração base por palavra em ms
@@ -102,9 +112,13 @@ export function App() {
     const data: UploadResponse = await res.json();
     setDocumentId(data.document_id);
     setStatus({ status: data.status, word_count: 0 });
+    setCurrentMime(file.type || null);
     setWords([]);
     setDisplayTokens([]);
     setCurrentIndex(0);
+    setStartPage(1);
+    setLastReadPage(1);
+    setSuppressProgressSync(false);
   };
 
   // Polling do status e fetch das palavras
@@ -137,6 +151,8 @@ export function App() {
   useEffect(() => {
     if (!documentId || status?.status !== "completed") return;
     let cancelled = false;
+    // Evita sincronizar progresso enquanto inicializa novo documento
+    setSuppressProgressSync(true);
     (async () => {
       try {
         const tres = await fetch(`${API_BASE}/documents/${documentId}/tokens`);
@@ -147,22 +163,58 @@ export function App() {
             setTokenPages(tdata.pages ?? []);
             setPageCount(tdata.page_count ?? 0);
             setTokenWeights(tdata.weights ?? Array(tdata.tokens.length).fill(1));
-            setCurrentIndex(0);
+            // prioridade: token salvo > startPage > início
+            if (lastTokenIndex > 0 && lastTokenIndex < (tdata.tokens?.length ?? 0)) {
+              setCurrentIndex(lastTokenIndex);
+            } else if (startPage > 1 && (tdata.pages?.length ?? 0) > 0) {
+              const idx = (tdata.pages ?? []).findIndex((p) => p >= startPage);
+              setCurrentIndex(Math.max(0, idx));
+            } else {
+              setCurrentIndex(0);
+            }
+            // Libera sincronização após um micro delay para garantir currentIndex aplicado
+            setTimeout(() => setSuppressProgressSync(false), 0);
+            setToast("Documento carregado");
           }
+        } else {
+          setToast("Carregando do cache/arquivo...");
         }
       } catch {}
     })();
     return () => {
       cancelled = true;
     };
-  }, [documentId, status?.status]);
+  }, [documentId, status?.status, startPage, lastTokenIndex]);
 
   // Salto para página inicial selecionada
   useEffect(() => {
     if (!tokenPages.length) return;
+    if (lastTokenIndex > 0 && !startPageDirty) return;
     const idx = tokenPages.findIndex((p) => p >= startPage);
-    if (idx >= 0) setCurrentIndex(idx);
-  }, [startPage, tokenPages]);
+    if (idx >= 0) {
+      setCurrentIndex(idx);
+      if (documentId && startPageDirty) {
+        const ctrl = new AbortController();
+        fetch(`${API_BASE}/documents/${documentId}/progress?page=${tokenPages[idx]}&token_index=${idx}`,
+          { method: "POST", signal: ctrl.signal }).catch(() => {});
+        setStartPageDirty(false);
+        setLastTokenIndex(0);
+      }
+    }
+  }, [startPage, tokenPages, lastTokenIndex, startPageDirty, documentId]);
+
+  // Atualiza progresso de página lida
+  useEffect(() => {
+    const currentPage = tokenPages[currentIndex] ?? 1;
+    setLastReadPage(currentPage);
+    if (!documentId) return;
+    if (suppressProgressSync) return;
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => {
+      fetch(`${API_BASE}/documents/${documentId}/progress?page=${currentPage}&token_index=${currentIndex}`, { method: "POST", signal: ctrl.signal }).catch(() => {});
+    }, 300);
+    return () => { clearTimeout(timeout); ctrl.abort(); };
+  }, [currentIndex, tokenPages, documentId, suppressProgressSync]);
 
   const currentWord = useMemo(() => {
     const size = computeWindowSize(currentIndex);
@@ -171,19 +223,47 @@ export function App() {
   }, [displayTokens, currentIndex, computeWindowSize]);
 
   return (
-    <div className="container mx-auto max-w-4xl px-4 py-8">
+    <div className="container mx-auto px-4 py-6 sm:py-8">
+      {toast && <Toast message={toast} onClose={() => setToast(null)} />}
       <header className="mb-8">
         <h1 className="text-2xl font-semibold">Leitor Rápido</h1>
         <p className="text-zinc-400">Envie um PDF e reproduza as palavras no ritmo desejado (PPM).</p>
       </header>
 
+      <div className="grid gap-6 sm:grid-cols-[1fr] lg:grid-cols-[18rem_1fr]">
+        <div className="order-2 lg:order-1">
+          <Sidebar
+            apiBase={API_BASE}
+            activeId={documentId}
+            onSelect={(doc) => {
+              setDocumentId(doc.id);
+              setStartPage(Math.max(1, (doc as any).last_read_page || 1));
+              setCurrentMime((doc as any).mime_type ?? null);
+              setLastTokenIndex((doc as any).last_token_index ?? 0);
+            }}
+            onDeleted={(docId) => {
+              if (documentId === docId) {
+                setDocumentId(null);
+                setStatus(null);
+                setWords([]);
+                setDisplayTokens([]);
+                setTokenPages([]);
+                setPageCount(0);
+                setCurrentIndex(0);
+                setStartPage(1);
+                setCurrentMime(null);
+              }
+            }}
+          />
+        </div>
+        <div className="order-1 lg:order-2">
       <div className="grid gap-6">
         <MagicCard className="p-6">
           <div className="flex items-center gap-4">
             <input
               id="file"
               type="file"
-              accept="application/pdf"
+              accept="application/pdf,text/plain,text/markdown,application/epub+zip,.txt,.md,.epub"
               className="block w-full text-sm text-zinc-300 file:mr-4 file:rounded-md file:border-0 file:bg-zinc-800 file:px-4 file:py-2 file:text-zinc-100 hover:file:bg-zinc-700"
               onChange={(e) => {
                 const f = e.target.files?.[0];
@@ -264,7 +344,7 @@ export function App() {
                   min={1}
                   max={Math.max(1, pageCount)}
                   value={startPage}
-                  onChange={(e) => setStartPage(Number(e.target.value))}
+                  onChange={(e) => { setStartPage(Number(e.target.value)); setStartPageDirty(true); setLastTokenIndex(0); }}
                   className="w-full sm:w-28 rounded-md bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-inset ring-zinc-700 focus:ring-2"
                 />
               </div>
@@ -296,15 +376,17 @@ export function App() {
           <MagicCard className="p-2">
             <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-sm text-zinc-400">
               <div>Página atual: {tokenPages[currentIndex] ?? 1} / {pageCount || "?"}</div>
-              <div>Visualização do PDF</div>
+              <div>Visualização</div>
             </div>
-            <PDFViewer
+            <PDFOrTextViewer
+              type={currentMime ?? undefined}
               url={`${API_BASE}/documents/${documentId}/file`}
               page={tokenPages[currentIndex] ?? 1}
-              className="w-full h-auto"
             />
           </MagicCard>
         )}
+      </div>
+        </div>
       </div>
     </div>
   );
