@@ -1,4 +1,5 @@
 import os
+import mimetypes
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -20,7 +21,7 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="Leitor Rápido PDF API", version="0.1.0")
 
-# CORS para permitir o front local (ajuste conforme necessário)
+# CORS para permitir acesso local e via IP de rede
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -29,9 +30,11 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ],
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1|10\.[0-9.]+|192\.168\.[0-9.]+|172\.(1[6-9]|2[0-9]|3[0-1])\.[0-9.]+):\d+$",
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "Range"],
+    expose_headers=["Accept-Ranges", "Content-Length", "Content-Range"],
 )
 
 
@@ -175,7 +178,14 @@ def get_document_file(document_id: str):
             file_path = meta.get("file_path")
     if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Arquivo não disponível")
-    return FileResponse(file_path, media_type="application/pdf")
+    # Determina o tipo MIME correto
+    meta = get_document_meta(document_id)
+    mime = (meta or {}).get("mime_type")
+    if not mime:
+        guessed, _ = mimetypes.guess_type(file_path)
+        mime = guessed or "application/octet-stream"
+    headers = {"Accept-Ranges": "bytes"}
+    return FileResponse(file_path, media_type=mime, headers=headers)
 
 
 @app.post("/documents/{document_id}/progress")

@@ -9,7 +9,9 @@ import { Toast } from "./components/Toast";
 type UploadResponse = { document_id: string; status: string };
 type StatusResponse = { status: string; word_count: number };
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
+// Define a URL base da API. Se não houver VITE_API_BASE, usa o host atual com porta 8000.
+const DEFAULT_API_BASE = `http://${window.location.hostname}:8000`;
+const API_BASE = import.meta.env.VITE_API_BASE ?? DEFAULT_API_BASE;
 
 export function App() {
   const [documentId, setDocumentId] = useState<string | null>(null);
